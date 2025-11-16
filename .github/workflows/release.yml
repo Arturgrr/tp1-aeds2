@@ -1,0 +1,134 @@
+name: Build and Release
+
+on:
+  push:
+    branches:
+      - '**'
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    
+    strategy:
+      matrix:
+        include:
+          - os: windows
+            arch: amd64
+            ext: .exe
+          - os: linux
+            arch: amd64
+            ext: ''
+          - os: darwin
+            arch: amd64
+            ext: ''
+          - os: darwin
+            arch: arm64
+            ext: ''
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.3'
+      
+      - name: Download dependencies
+        run: go mod download
+      
+      - name: Build
+        env:
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.arch }}
+        run: |
+          OUTPUT_NAME="tp1-aeds2-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.ext }}"
+          go build -o $OUTPUT_NAME .
+          mkdir -p dist
+          mv $OUTPUT_NAME dist/
+      
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.os }}-${{ matrix.arch }}
+          path: dist/tp1-aeds2-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.ext }}
+          retention-days: 1
+  
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: binary-*
+          merge-multiple: false
+      
+      - name: Consolidate binaries
+        run: |
+          mkdir -p dist/consolidated
+          find dist -type f \( -name "tp1-aeds2-*" -o -name "*.exe" \) -exec cp {} dist/consolidated/ \;
+          chmod +x dist/consolidated/tp1-aeds2-* || true
+          ls -lh dist/consolidated/
+      
+      - name: Get version
+        id: version
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            VERSION=${GITHUB_REF#refs/tags/}
+          else
+            BRANCH_NAME=${GITHUB_REF#refs/heads/}
+            BRANCH_NAME=$(echo "$BRANCH_NAME" | sed 's/[^a-zA-Z0-9]/-/g')
+            SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
+            VERSION="v$(date +'%Y%m%d')-${BRANCH_NAME}-${SHORT_SHA}"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Version: $VERSION"
+      
+      - name: Create Release
+        id: create_release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          name: Release ${{ steps.version.outputs.version }}
+          body: |
+            ## Release ${{ steps.version.outputs.version }}
+            
+            Binários compilados para todas as plataformas suportadas.
+            
+            ### Plataformas disponíveis:
+            - **Windows (amd64)**: `tp1-aeds2-windows-amd64.exe`
+            - **Linux (amd64)**: `tp1-aeds2-linux-amd64`
+            - **macOS (amd64)**: `tp1-aeds2-darwin-amd64`
+            - **macOS (arm64)**: `tp1-aeds2-darwin-arm64`
+            
+            ### Como usar:
+            1. Baixe o binário correspondente à sua plataforma
+            2. Execute o arquivo no terminal
+            3. Siga as instruções do programa
+            
+            **Branch:** ${{ github.ref_name }}
+            **Commit:** ${{ github.sha }}
+            **Data:** ${{ github.event.head_commit.timestamp }}
+          files: |
+            dist/consolidated/tp1-aeds2-windows-amd64.exe
+            dist/consolidated/tp1-aeds2-linux-amd64
+            dist/consolidated/tp1-aeds2-darwin-amd64
+            dist/consolidated/tp1-aeds2-darwin-arm64
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+

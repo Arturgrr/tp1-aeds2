@@ -3,3 +3,6 @@ instructions/
 
 main
 tp1
+dist/
+*.exe
+*.dat
